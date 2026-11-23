@@ -1,0 +1,3 @@
+# LoRA rank ablation (full data mix). Everything not listed uses DEFAULTS in sft_lora.py
+lora_r: 8
+lora_alpha: 16

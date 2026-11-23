@@ -1,0 +1,4 @@
+# data-mix ablation: MedQuAD only
+lora_r: 16
+lora_alpha: 32
+sources: [medquad]
