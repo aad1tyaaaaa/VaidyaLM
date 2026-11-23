@@ -399,3 +399,35 @@ One MLflow run per (model, prompt) with params and metrics. For adapters we trai
 - [ ] Trigger `benchmark_models` with config:
       `{"models": [{"model": "Qwen/Qwen2.5-1.5B-Instruct", "adapter": null}, {"model": "Qwen/Qwen2.5-1.5B-Instruct", "adapter": "YOU/vaidyalm-qwen1.5b-lora-r16"}]}`
 - [ ] Open `results/benchmark.md` and http://localhost:5000. Commit `benchmark.md`/`.csv` in a PR `phase-5/benchmark-results`.
+
+---
+
+## Phase 6 · PR 11 — Timing, README, demo
+
+**What landed:** `baseline/time_airflow.py`, `demo/`, the full `README.md`.
+
+### Timing the Airflow pipeline
+`time_airflow.py` triggers both DAGs through Airflow's **REST API** (`POST /dags/{id}/dagRuns`), polls until each run
+finishes, and uses Airflow's own `start_date`/`end_date`, not a stopwatch on your laptop.
+- **cold**: deletes `data/interim` (ETL cache) and that model's cached predictions first, so everything is computed.
+- **warm**: keeps them, which shows what caching buys on reruns.
+Report cold and warm **separately**. Comparing only warm runs to the naive pipeline would overstate the gain.
+
+Computing the result: `reduction % = (naive_mean - airflow_mean) / naive_mean × 100`, and say which (cold/warm).
+
+### The README is the product
+Recruiters read the README, not the code. It needs: what it is (one line), an architecture diagram (mermaid renders on
+GitHub), how to run, **measured** results, and limitations. Listing limitations makes the numbers more believable.
+
+### Demo
+`demo/app.py` is a Gradio interface: paste an abstract and a question to get `Answer: yes|no|maybe` + a reason. It
+imports the same `structured_text` prompt used in training and eval.
+
+### ⏰ Reminders — final measurements (Phase 6)
+- [ ] Find the Airflow password: `docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt`
+- [ ] PowerShell: `$env:AIRFLOW_PASSWORD="..."` then
+      `python -m baseline.time_airflow --mode cold --runs 3` and `--mode warm --runs 3`.
+- [ ] Fill the README + PLAN.MD tables from `results/*.csv`. Compute the % reductions and say whether each one is relative or absolute.
+- [ ] Optional: HF Spaces → New Space (Gradio) → upload `demo/app.py`, `demo/requirements.txt`, `src/eval/prompts.py`
+      (as `prompts.py`) → Settings → Variables: `ADAPTER=YOU/vaidyalm-qwen1.5b-lora-r16`.
+- [ ] Update the resume bullets in PLAN.MD §9 with the real X% and Y%.
