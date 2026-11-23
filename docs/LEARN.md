@@ -72,3 +72,43 @@ python -c "import pandas, datasets, sklearn; print('ok')"
   - `docker compose logs airflow | findstr password` → the admin password
   - open http://localhost:8080 (Airflow) and http://localhost:5000 (MLflow). Both load = Phase 0 done ✅
 - [ ] Stop everything: `docker compose down` (add `-v` to also wipe the Postgres volume).
+
+---
+
+## Phase 1 · PR 3 — Prompts + scorer
+
+**What landed:** `src/eval/prompts.py`, `src/eval/scorer.py`.
+
+### The task: PubMedQA
+Each example = a research abstract (**context**) + a **question** → label **yes / no / maybe**. It's a 3-class
+classification problem disguised as QA. `pqa_labeled` has 1,000 expert-labeled examples — our **test set, never
+trained on** (if the model sees test data during training, the score is meaningless: that's *leakage*).
+
+### Three prompts = three ways of asking
+| Template | Idea | Why it matters |
+|---|---|---|
+| `zero_shot` | Just ask. | The floor — what the raw model does. |
+| `few_shot` | Show 3 solved examples first (*in-context learning*). | Teaches the format without training. |
+| `structured` | Force `Answer: yes|no|maybe` + one-line reason. | Easy to parse; we'll **train** on this same format in Phase 4. |
+
+Separating "prompting gains" from "fine-tuning gains" is the point of the ablation table in Phase 6.
+
+### Why the scorer is the most important file
+LLMs output free text, not labels. `parse_label` turns `"**Answer:** Yes, because..."` into `"yes"`:
+1. Look for `answer ... yes|no|maybe` first (structured output).
+2. Fall back to the first standalone yes/no/maybe word.
+3. Nothing found → `None` → counted as **wrong**, and tracked as **parse-fail %**.
+
+Never silently drop unparseable outputs — that would inflate accuracy. Reporting parse-fail % is honest.
+
+### Metrics
+- **Accuracy** = correct / total. Misleading if classes are imbalanced (PubMedQA is ~55% yes).
+- **Macro-F1** = F1 per class, then a plain average. A model that always says "yes" gets decent accuracy but terrible
+  macro-F1 because "no" and "maybe" F1 are 0. That's why we report both.
+
+### Try it
+```bash
+python -m src.eval.scorer      # runs the built-in asserts, prints "scorer ok"
+```
+`python -m src.eval.scorer` (not `python src/eval/scorer.py`) runs it as a module from the repo root so
+`from src.eval import ...` imports work.
