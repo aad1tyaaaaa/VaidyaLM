@@ -144,3 +144,35 @@ run the script. All real logic lives in `src/` so it's versioned and reviewable 
       PLAN.MD §6. **Report exactly what you measured.**
 - [ ] Open a few lines of the `.jsonl` predictions — look at *how* the base model fails. That tells you what
       fine-tuning must fix.
+
+---
+
+## Phase 1 · PR 5 — Flat examples + prediction cache
+
+**What changed:** `prompts.py` and `infer.py` were refactored so every later phase (training, ETL dev set,
+Airflow eval DAG, naive pipeline) can reuse them.
+
+### 1. One example format everywhere
+PubMedQA on HF nests context as `{"contexts": [...]}`. Our ETL produces a flat string. Instead of two code paths,
+`prompts.from_hf()` converts HF rows to `{"id", "question", "context", "label"}` once, at the edge. Rule of thumb:
+**normalize data at the boundary, keep the core simple.**
+
+### 2. `format_user()` — train/eval format match
+Fine-tuning teaches the model to respond to a *specific* prompt shape. If you train on one format and evaluate on
+another, you measure format confusion, not knowledge. `format_user()` is the single function the trainer uses, and it
+calls the exact same `structured_text()` the evaluator uses.
+
+### 3. Prediction cache
+`results/predictions/<model>__<prompt>/part-*.jsonl`. Before generating, `run()` reads every cached id and only
+generates the missing ones. Why it matters:
+- Kaggle session dies at example 800? Rerun → only 200 left.
+- Airflow eval DAG (Phase 5) gets "warm cache" speedups for free → part of the ≥25% timing goal.
+- Each parallel shard writes its own `part-<hash>.jsonl` → no two processes ever write the same file (no locks needed).
+
+### 4. Lazy imports
+`torch`/`transformers` are imported *inside* functions. Airflow parses DAG files every ~30 s; importing torch at the
+top would make that slow. Also lets `report.py` read the cache without loading a GPU stack.
+
+### Real observation from testing
+Qwen2.5-**0.5B** on CPU answered **"maybe"** to "Does smoking improve lung function?" given a context that clearly
+says no. That's the failure mode fine-tuning targets: the base model hedges instead of committing to the context.
