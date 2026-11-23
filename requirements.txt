@@ -1,0 +1,20 @@
+# --- ETL (runs locally / in Airflow) ---
+pandas>=2.2
+pyarrow>=15
+lxml>=5
+beautifulsoup4>=4.12
+datasketch>=1.6
+pydantic>=2.6
+datasets>=2.19
+huggingface_hub>=0.23
+
+# --- eval / metrics ---
+scikit-learn>=1.4
+mlflow>=2.12
+
+# --- training + GPU inference (Kaggle/Colab T4; torch comes preinstalled there) ---
+transformers>=4.44
+peft>=0.12
+trl>=0.10
+accelerate>=0.33
+bitsandbytes>=0.43; sys_platform == "linux"
