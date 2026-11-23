@@ -112,3 +112,35 @@ python -m src.eval.scorer      # runs the built-in asserts, prints "scorer ok"
 ```
 `python -m src.eval.scorer` (not `python src/eval/scorer.py`) runs it as a module from the repo root so
 `from src.eval import ...` imports work.
+
+---
+
+## Phase 1 · PR 4 — Baseline inference on Kaggle
+
+**What landed:** `src/eval/infer.py`, `notebooks/baseline_kaggle.ipynb`.
+
+### What `infer.py` does, step by step
+1. **Load tokenizer with `padding_side="left"`.** Batched generation pads short prompts. For decoder-only models
+   the padding must be on the *left*, so every prompt ends right where generation starts. Right padding = garbage output.
+2. **Load model in `float16`.** The T4 GPU has no bfloat16; fp16 halves memory vs fp32 (1.5B params ≈ 3 GB).
+3. **`apply_chat_template`.** Instruct models were trained on a specific chat format (`<|im_start|>user ...`).
+   Feeding raw text skips that and quietly lowers accuracy.
+4. **Greedy decoding (`do_sample=False`) + fixed seed.** Same input → same output. Benchmarks must be reproducible.
+5. **Slice off the prompt:** `gen[:, input_len:]` — `generate` returns prompt + answer; we only score the answer.
+6. **Save raw outputs** to `results/predictions/*.jsonl` (git-ignored) so you can *read* failures, and
+   **append metrics** to `results/baseline.csv` — this is the number every later claim is compared against.
+7. `--adapter` is already wired for Phase 4: same script evaluates the fine-tuned model → apples-to-apples.
+
+### Why Kaggle
+Your laptop has no CUDA GPU. Kaggle gives ~30 GPU-hours/week free. The notebook is a *thin wrapper*: clone repo →
+run the script. All real logic lives in `src/` so it's versioned and reviewable — never bury logic in notebooks.
+
+### ⏰ Reminders — run the baseline (this is the Phase 1 exit criterion)
+- [ ] Merge PRs #1 → #2 → #3 → #4 in order (each is stacked on the previous).
+- [ ] Kaggle → New Notebook → File → Import → upload `notebooks/baseline_kaggle.ipynb`.
+- [ ] Settings: Accelerator **GPU T4**, Internet **On** (needs phone verification).
+- [ ] Run the smoke-test cell first. Then the full cells (~20–40 min total).
+- [ ] Download `baseline.csv`, put it in `results/`, open a PR `phase-1/baseline-results`, and fill in the table in
+      PLAN.MD §6. **Report exactly what you measured.**
+- [ ] Open a few lines of the `.jsonl` predictions — look at *how* the base model fails. That tells you what
+      fine-tuning must fix.
