@@ -360,3 +360,42 @@ looks for a local checkpoint first, then downloads `last-checkpoint/` from the H
 - [ ] Run the smoke cell (200 rows) before the full run. Out of memory → `batch_size: 2`, `grad_accum: 8`.
 - [ ] Do `r16` first. Compare `results/dev.csv`: does the adapter beat the base model? Then run the ablations one per session.
 - [ ] Download `results.zip` → commit the CSVs + `train_logs/` in a PR `phase-4/results`; copy `predictions/` locally (it's git-ignored).
+
+---
+
+## Phase 5 · PR 10 — Eval DAG (`benchmark_models`) + report
+
+**What landed:** `dags/benchmark_models.py`, `src/eval/report.py`.
+
+### The DAG
+```
+list_models -> shard_eval_set -> batched_inference.expand(model x prompt x shard) -> score_and_report -> log_to_mlflow
+```
+- **DAG params**: trigger with a JSON config (Airflow UI → ▶ Trigger DAG w/ config) to pick models, prompts, limit.
+  No code edits needed to add an adapter.
+- **Cartesian fan-out**: 2 models × 3 prompts × 4 shards = 24 mapped inference tasks. `max_active_tis_per_dagrun=2`
+  because each task may load a model.
+- **Cache reuse**: `infer.run()` (PR 5) skips cached ids. So **GPU-heavy inference can happen on Kaggle**; you copy
+  `results/predictions/` into the repo and the DAG only scores, reports and logs. One trigger, full table.
+
+### Reading a confusion matrix
+Rows are the true label, columns are what the model said. From the CPU test of the 0.5B model:
+```
+gold \ pred | yes | no | maybe
+yes         |  0  |  0  |  1
+no          |  0  |  0  |  1
+maybe       |  0  |  0  |  1
+```
+Everything sits in the `maybe` column, so the model always hedges. Accuracy alone (33%) hides that; the matrix shows
+it immediately. After fine-tuning you want the mass on the diagonal.
+
+### MLflow
+One MLflow run per (model, prompt) with params and metrics. For adapters we trained, the training loss curve from
+`results/train_logs/<run>.json` is attached to the run, so the MLflow UI shows *how it trained* next to
+*how it scored*.
+
+### ⏰ Reminders — Phase 5 exit criterion: one trigger produces the full table
+- [ ] Copy the Kaggle `predictions/` folders (baseline + adapters) into `results/predictions/`.
+- [ ] Trigger `benchmark_models` with config:
+      `{"models": [{"model": "Qwen/Qwen2.5-1.5B-Instruct", "adapter": null}, {"model": "Qwen/Qwen2.5-1.5B-Instruct", "adapter": "YOU/vaidyalm-qwen1.5b-lora-r16"}]}`
+- [ ] Open `results/benchmark.md` and http://localhost:5000. Commit `benchmark.md`/`.csv` in a PR `phase-5/benchmark-results`.
