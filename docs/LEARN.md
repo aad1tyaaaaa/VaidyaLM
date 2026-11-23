@@ -317,3 +317,46 @@ treat MedQuAD rows as labeled. `_read()` converts NaN back to `None` in one plac
 - [ ] Trigger it **again** → `parse_shard`/`clean_shard` finish in seconds (cache). That's your warm-cache run.
 - [ ] Open a PR `phase-3/funnel-results` with `results/funnel.csv` and the funnel table pasted into PLAN.MD.
 - [ ] Optional synthetic data: set `SYNTH_N=1000` in `.env` (uses HF Inference credits), rebuild, retrigger.
+
+---
+
+## Phase 4 · PR 9 — QLoRA fine-tuning
+
+**What landed:** `src/train/sft_lora.py`, `src/train/configs/*.yaml`, `notebooks/train_kaggle.ipynb`.
+
+### QLoRA in three ideas
+1. **Quantization (the Q).** Base weights are stored in 4-bit **NF4** (a 4-bit format designed for normally distributed
+   weights). 1.5B params × 0.5 byte ≈ 0.8 GB instead of 3 GB, so it fits a 16 GB T4 with room for activations.
+   Double quantization also compresses the scaling constants.
+2. **LoRA.** Instead of updating a big weight matrix W (d×d), learn two thin ones, A (d×r) and B (r×d), and use W + BA.
+   With r=16 that's ~0.5% of the parameters. Only A and B get gradients; the 4-bit base is frozen.
+   `lora_alpha` scales the update (alpha/r = 2 here). We adapt the attention projections `q,k,v,o_proj`.
+3. **Memory tricks.** *Gradient checkpointing* recomputes activations in the backward pass instead of storing them
+   (slower, much less memory). *Gradient accumulation* runs 4 micro-batches of 4 before one optimizer step, so the
+   effective batch is 16.
+
+### Why plain `transformers.Trainer` and not TRL's `SFTTrainer`
+TRL's argument names change between versions, which breaks notebooks. The only thing we needed from it was
+"loss on the response only", and `encode()` does that in about 8 lines:
+- the prompt tokens get label **-100** (PyTorch's "ignore" value), so the model is graded only on its answer;
+- prompt and response are tokenized separately and concatenated, so the mask lines up exactly (tested with the
+  Qwen tokenizer: the loss covers `Answer: yes\nReason: ...<|im_end|>`, and the model also learns *when to stop*).
+
+### Configs and ablations
+`DEFAULTS` in `sft_lora.py` hold the PLAN.MD hyperparameters. Each YAML file lists only what it changes:
+| Config | Question it answers |
+|---|---|
+| `r8`, `r16`, `r32` | Does LoRA capacity matter? |
+| `r16_medquad` | Does MedQuAD alone (no yes/no data) help PubMedQA? |
+| `r16_medquad_artificial` | What does synthetic data add on top? |
+
+### Surviving Kaggle disconnects
+`hub_strategy="checkpoint"` pushes the latest checkpoint to your HF repo every `save_steps`. On restart the script
+looks for a local checkpoint first, then downloads `last-checkpoint/` from the Hub and resumes from it.
+
+### ⏰ Reminders — train (Phase 4 exit criterion: beat the baseline on dev)
+- [ ] The dataset must be on the HF Hub first (PR 8 checklist).
+- [ ] Kaggle → import `notebooks/train_kaggle.ipynb` → Add-ons → Secrets → `HF_TOKEN` → set `HF_USER` → Run All.
+- [ ] Run the smoke cell (200 rows) before the full run. Out of memory → `batch_size: 2`, `grad_accum: 8`.
+- [ ] Do `r16` first. Compare `results/dev.csv`: does the adapter beat the base model? Then run the ablations one per session.
+- [ ] Download `results.zip` → commit the CSVs + `train_logs/` in a PR `phase-4/results`; copy `predictions/` locally (it's git-ignored).
