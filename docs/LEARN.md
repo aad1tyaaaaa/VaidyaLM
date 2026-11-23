@@ -265,3 +265,55 @@ duplicated work. If the comparison were rigged, the number would be worthless in
 ### ⏰ Reminders — measure the naive baseline (after Docker is up, see PR 2/PR 8 notes)
 - [ ] `docker compose exec airflow python -m baseline.naive_pipeline --runs 3`
 - [ ] Result lands in `results/timing_naive.csv`. Commit it in a PR `phase-2/naive-timing`.
+
+---
+
+## Phase 3 · PR 8 — The ETL DAG (`preprocess_corpus`)
+
+**What landed:** `dags/preprocess_corpus.py`, `src/etl/stages.py`, `Dockerfile`, `requirements-airflow.txt`,
+`.env.example`, compose updates.
+
+### Read the DAG bottom-up
+```python
+parsed  = parse_shard.expand(shard=ingest_raw())     # 1 task per shard, run in parallel
+cleaned = clean_shard.expand(parsed=parsed)          # 1 task per parsed shard
+split_and_push(validate_schema(build_instruction_pairs(chunk(dedupe_minhash(cleaned)))))
+```
+- **TaskFlow API (`@task`)**: plain Python functions become Airflow tasks; return values are passed downstream via
+  **XCom** (Airflow's small key-value store). Rule: pass **paths and counts** through XCom, never datasets — XCom lives
+  in Postgres and isn't built for megabytes.
+- **Dynamic task mapping (`.expand`)**: the number of shards is only known at runtime (after ingest). `.expand()` creates
+  one task instance per item — this is where the parallel speedup comes from. `max_active_tis_per_dagrun=8` caps it so
+  your laptop doesn't run out of RAM.
+- **Fan-in**: `dedupe_minhash(cleaned)` receives the *list* of all mapped results — it must, because dedupe is global.
+- **Imports inside tasks**: the scheduler re-parses DAG files constantly; heavy top-level imports slow everything.
+
+### The cache (`stages.py`)
+Each output file `x.parquet` gets a sidecar `x.hash` = sha256(**input bytes + the stage's source code**).
+- Same input and same code → skip (warm run).
+- Change a cleaning rule in `clean.py` → hash changes → that stage re-runs automatically. Including the code in the key
+  prevents the classic "stale cache" bug.
+- Per-file sidecars instead of one shared `manifest.json`: 8 parallel tasks writing one JSON file = lost updates
+  (race condition). Separate files = no locking needed.
+
+### Pandas 3 gotcha (found while writing this)
+Reading parquet in pandas 3 returns missing strings as `NaN`, and `bool(NaN)` is **True** — so `if r["label"]:` would
+treat MedQuAD rows as labeled. `_read()` converts NaN back to `None` in one place.
+
+### Docker changes
+- Custom image (`Dockerfile`): installs CPU-only torch + our deps **once at build time**. The
+  `_PIP_ADDITIONAL_REQUIREMENTS` trick from PR 2 would reinstall them on every start.
+- Pinning `apache-airflow==2.10.5` in the same `pip install` stops pip from "helpfully" upgrading Airflow.
+- Whole repo mounted at `/opt/airflow/repo` → `dags/`, `src/`, `baseline/`, `data/`, `results/` all visible, and
+  the naive pipeline can run in the *same* container (fair timing).
+- `env_file: .env` (optional) passes your `HF_TOKEN` in without committing it.
+- `DAGS_ARE_PAUSED_AT_CREATION: false` + basic-auth API → the timing script (PR 11) can trigger DAGs over HTTP.
+
+### ⏰ Reminders — run the ETL (Phase 3 exit criterion)
+- [ ] `copy .env.example .env` and fill in `HF_TOKEN` + `HF_DATASET_REPO` (e.g. `yourname/vaidyalm-instruct`).
+- [ ] `docker compose up -d --build` (first build ~5–10 min: torch is big).
+- [ ] Airflow UI → `preprocess_corpus` → ▶ Trigger. Watch the **Grid** view: `parse_shard` shows `[N]` mapped tasks.
+- [ ] Check `results/funnel.csv` and `data/quarantine.jsonl`. Dataset should appear on huggingface.co.
+- [ ] Trigger it **again** → `parse_shard`/`clean_shard` finish in seconds (cache). That's your warm-cache run.
+- [ ] Open a PR `phase-3/funnel-results` with `results/funnel.csv` and the funnel table pasted into PLAN.MD.
+- [ ] Optional synthetic data: set `SYNTH_N=1000` in `.env` (uses HF Inference credits), rebuild, retrigger.
