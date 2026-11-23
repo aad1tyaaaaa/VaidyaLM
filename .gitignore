@@ -1,0 +1,17 @@
+# data & artifacts (big, regenerable — never commit)
+data/
+mlruns/
+mlflow/
+logs/
+*.parquet
+results/predictions/
+
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
