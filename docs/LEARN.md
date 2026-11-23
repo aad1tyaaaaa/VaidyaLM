@@ -176,3 +176,59 @@ top would make that slow. Also lets `report.py` read the cache without loading a
 ### Real observation from testing
 Qwen2.5-**0.5B** on CPU answered **"maybe"** to "Does smoking improve lung function?" given a context that clearly
 says no. That's the failure mode fine-tuning targets: the base model hedges instead of committing to the context.
+
+---
+
+## Phase 3 · PR 6 — ETL building blocks (pure functions)
+
+**What landed:** `src/etl/{ingest,parse,synth,clean,dedupe,chunk,build_pairs,schema,split}.py`, `tests/test_etl.py`.
+
+> Why Phase 3 before Phase 2? The naive pipeline (Phase 2) must do the *same work* as the Airflow pipeline, or the
+> timing comparison is fake. So the logic lives here once; Phase 2 calls it sequentially, Phase 3's DAG calls it in parallel.
+
+### The flow — one record shape all the way through
+```
+ingest  -> shards (12 MedQuAD dirs + PubMedQA jsonl files)
+parse   -> {id, source, question, context, answer, label}
+clean   -> normalized text, bad rows dropped with a reason
+dedupe  -> near-duplicates + anything resembling the TEST set removed
+chunk   -> long text cut at sentence boundaries to fit 1024 tokens
+build_pairs -> {..., response}   e.g. "Answer: yes\nReason: <first sentence>"
+schema  -> pydantic validates; failures -> quarantine with reason
+split   -> train / dev(100) parquet -> HF Hub + dataset card
+```
+
+### Concepts worth knowing
+- **Pure functions vs. I/O.** Every module takes Python lists and returns Python lists. No files, no Airflow. That makes
+  them testable in milliseconds (`tests/test_etl.py`) and reusable by both pipelines. File reading/caching comes in PR 8.
+- **XML parsing (`parse.py`).** `lxml` with `recover=True` tolerates slightly broken files instead of crashing a
+  47k-row job on one bad file. BeautifulSoup only runs when a string actually contains `<` (HTML) — cheap path first.
+- **IDs must be unique — real bug found while testing.** MedQuAD reuses `Document id` values across files, so the
+  first version produced duplicate ids and the dedupe step crashed. Fix: build ids from the *file name*. Lesson: always
+  run your ETL on real data early; synthetic tests only catch the bugs you imagined.
+- **Quality filters (`clean.py`).** Every drop has a named reason (`empty_answer`, `language`, ...). Counting reasons
+  turns "the data got smaller" into an explainable **data funnel**.
+- **MinHash LSH (`dedupe.py`).** Comparing every pair of 40k docs = 800M comparisons. MinHash compresses each doc into
+  64 numbers such that similar docs get similar numbers; LSH buckets them so you only compare likely matches.
+  Threshold 0.85 ≈ "85% of 3-word shingles shared".
+- **Leakage filter.** The 1,000 test questions are inserted into the LSH *first*. Any training row that matches one is
+  dropped and counted as `leaked`. This is what makes the final accuracy number trustworthy.
+- **Synthetic data (`synth.py`).** A big model labels unlabeled abstracts. We only keep a label if (1) two samples at
+  different temperatures agree (*self-consistency*) and (2) the reason uses words from the abstract (*grounding*).
+  Cheap filters that remove a lot of hallucination. Off by default because API calls cost credits.
+- **pydantic (`schema.py`).** Declarative rules (`min_length`, allowed labels, "response starts with its label").
+  Invalid rows aren't silently dropped — they go to a quarantine file you can inspect.
+
+### Real numbers (MedQuAD only, measured on this machine)
+| Stage | Rows |
+|---|---|
+| raw | 47,441 |
+| cleaned | 16,390 (31,034 empty answers: MedlinePlus collections had answers removed for copyright) |
+| deduped | 15,330 (1,060 near-duplicates) |
+
+Dedupe took ~44 s — it's the slowest step and the one that *can't* be parallelized (it's a global comparison).
+
+### Try it
+```bash
+python -m tests.test_etl        # -> etl ok
+```
