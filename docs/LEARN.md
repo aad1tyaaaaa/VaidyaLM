@@ -232,3 +232,36 @@ Dedupe took ~44 s — it's the slowest step and the one that *can't* be parallel
 ```bash
 python -m tests.test_etl        # -> etl ok
 ```
+
+---
+
+## Phase 2 · PR 7 — Naive sequential pipeline (the timing baseline)
+
+**What landed:** `baseline/naive_pipeline.py`.
+
+### Why build a deliberately simple version?
+The resume claim is "Airflow cut benchmarking time by Y%". A percentage needs a **baseline**. This script is that
+baseline: the honest version a person would write first — a plain `for` loop.
+
+### What makes it "naive" (and what doesn't)
+| | Naive | Airflow (PR 8, PR 10) |
+|---|---|---|
+| Shards | one after another | in parallel (`.expand()`) |
+| Re-running unchanged shards | re-parses everything | skips (content-hash cache) |
+| Eval | `batch_size=1`, no cache | batched + prediction cache |
+| ETL logic | **same functions** | **same functions** |
+
+The rule from PLAN.MD: *realistic code that's simply unoptimized, not deliberately slowed down.* No `sleep()`, no
+duplicated work. If the comparison were rigged, the number would be worthless in an interview.
+
+### Fair-measurement rules
+- Run both pipelines **in the same environment** (inside the Airflow container) — laptop-vs-Docker would compare
+  machines, not pipelines.
+- Raw downloads are excluded (both skip existing files) — network speed isn't what we're measuring.
+- Same eval config for both: Qwen2.5-**0.5B**, `structured` prompt, 100 examples. Small enough for CPU.
+- 3 runs, report the mean (and look at the spread — one slow run can be a cold disk cache).
+- `time.perf_counter()` — monotonic, high-resolution; never use `time.time()` for durations.
+
+### ⏰ Reminders — measure the naive baseline (after Docker is up, see PR 2/PR 8 notes)
+- [ ] `docker compose exec airflow python -m baseline.naive_pipeline --runs 3`
+- [ ] Result lands in `results/timing_naive.csv`. Commit it in a PR `phase-2/naive-timing`.
