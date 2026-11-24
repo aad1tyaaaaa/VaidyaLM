@@ -431,3 +431,23 @@ imports the same `structured_text` prompt used in training and eval.
 - [ ] Optional: HF Spaces → New Space (Gradio) → upload `demo/app.py`, `demo/requirements.txt`, `src/eval/prompts.py`
       (as `prompts.py`) → Settings → Variables: `ADAPTER=YOU/vaidyalm-qwen1.5b-lora-r16`.
 - [ ] Update the resume bullets in PLAN.MD §9 with the real X% and Y%.
+
+## Maintenance — eval tests (`tests/test_eval.py`)
+
+**What landed:** `tests/test_eval.py`, edge-case checks for the prompt templates and the scorer. Run it with
+`python -m tests.test_eval` (needs `scikit-learn`).
+
+### Why test the scorer so carefully
+Every number in the README (accuracy, macro-F1, the ≥15% gain) comes from `scorer.py`. If the parser quietly misreads
+model output, the headline result is wrong and nothing crashes to warn you. So the tests pin down the tricky cases:
+- `"Nobody knows"` must **not** parse as `no`, and `"yesterday"` must **not** parse as `yes`. The regex uses word
+  boundaries (`\b`) so a label only matches as a whole word.
+- An explicit `Answer: yes` beats a stray `no` earlier in the text.
+- Unparseable outputs count as **wrong** and are reported as `parse_fail_pct`, so a model can't look better by refusing to answer.
+- If a class never appears in the gold labels, macro-F1 should not crash. It averages over all three labels and counts a missing one as 0.
+
+It also checks one invariant: the prompt used for **training** (`format_user`) is identical to the **eval** structured
+prompt. If those drift apart, the fine-tuned model is tested on a format it never saw.
+
+### Manual to-do for you
+- [ ] `pip install -r requirements.txt` in your local env, then run `python -m tests.test_eval` and `python -m tests.test_etl`.
