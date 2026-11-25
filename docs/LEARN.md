@@ -451,3 +451,27 @@ prompt. If those drift apart, the fine-tuned model is tested on a format it neve
 
 ### Manual to-do for you
 - [ ] `pip install -r requirements.txt` in your local env, then run `python -m tests.test_eval` and `python -m tests.test_etl`.
+
+## Maintenance — ETL cache tests (`tests/test_stages.py`)
+
+**What landed:** `tests/test_stages.py`, checks for the caching code in `src/etl/stages.py`. Run it with
+`python -m tests.test_stages`.
+
+### The idea: a cache you can trust
+The Airflow ETL skips work it already did. Each output parquet has a small sidecar file (`x.hash`) holding a
+fingerprint (a SHA-256 hash) of the input bytes plus the stage code. Next run: same fingerprint → skip, different
+fingerprint → recompute. This is what makes "warm" runs faster than "cold" ones, and that difference is a headline
+number in the README.
+
+A cache can fail in two ways, and only one of them is loud:
+- **Too eager** (skips when it should recompute): you get stale data and no error. The tests change a file's content,
+  and also just rename it, and check the fingerprint changes both times.
+- **Too cautious** (always recomputes): the pipeline works but the timing gain is fake-small. The tests check that an
+  unchanged key really skips the compute function.
+
+Also checked: if the sidecar is missing, the parquet is not trusted and is rebuilt, and missing text values read back as
+`None` instead of `NaN` (in pandas, `NaN` counts as true, so unlabeled rows would look labeled).
+
+### Manual to-do for you
+- [ ] Run `python -m tests.test_stages` locally (same requirements as the other tests).
+- [ ] When you do the cold + warm Airflow runs, check the task logs show `cache_hit: True` on the warm run.
