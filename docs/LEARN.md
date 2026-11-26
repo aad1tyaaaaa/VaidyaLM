@@ -475,3 +475,22 @@ Also checked: if the sidecar is missing, the parquet is not trusted and is rebui
 ### Manual to-do for you
 - [ ] Run `python -m tests.test_stages` locally (same requirements as the other tests).
 - [ ] When you do the cold + warm Airflow runs, check the task logs show `cache_hit: True` on the warm run.
+
+## Maintenance — report tests (`tests/test_report.py`)
+
+**What landed:** `tests/test_report.py`, checks for `src/eval/report.py`, the script that turns cached model
+predictions into `results/benchmark.md` / `benchmark.csv`. Run it with `python -m tests.test_report`.
+
+### The idea: test the last step before the headline
+`report.py` is the final hop between raw predictions and the table you will quote on your resume. It reads each
+`model__prompt` folder of cached predictions, scores them, and draws a confusion matrix (rows = true answer,
+columns = what the model said). The tests feed it a tiny fake prediction set where we know the right answer by hand:
+- one correct, one wrong, one unparseable output → accuracy must be 1/3 and parse-fail 33.3%;
+- the unparseable output must land in the `invalid` column of the matrix, not silently vanish;
+- a model folder with no predictions must be skipped instead of crashing the report;
+- passing `ids=[...]` must score only those examples (used to compare models on the same subset).
+
+Tests write into a temporary folder, so they never touch your real `results/` files.
+
+### Manual to-do for you
+- [ ] Run `python -m tests.test_report` locally (needs `pandas` and `scikit-learn` from `requirements.txt`).
