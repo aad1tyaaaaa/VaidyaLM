@@ -494,3 +494,21 @@ Tests write into a temporary folder, so they never touch your real `results/` fi
 
 ### Manual to-do for you
 - [ ] Run `python -m tests.test_report` locally (needs `pandas` and `scikit-learn` from `requirements.txt`).
+
+## Maintenance — prompt tests (`tests/test_prompts.py`)
+
+**What landed:** `tests/test_prompts.py`, checks for `src/eval/prompts.py`, the file that builds the text we send to
+the model. Run it with `python -m tests.test_prompts` (no extra packages needed).
+
+### The idea: the prompt is part of the experiment
+A model's score depends on the exact words it is shown, so a silent change to a prompt can fake an improvement (or hide
+one). The tests pin down three things:
+- **No answer leaks.** The question being tested must never include its own gold label. Few-shot demos show labelled
+  examples, but only the *demos*, never the test row.
+- **Eval matches training.** The `structured` prompt used at evaluation time must be byte-for-byte the one used when
+  fine-tuning (`format_user`). If they drift apart, you would be testing the model on a format it was not trained on.
+- **Shape is stable.** Few-shot demos come before the real question and the prompt ends at `Answer:` so the model
+  fills in the label; PubMedQA rows from Hugging Face are flattened into our simple dict correctly.
+
+### Manual to-do for you
+- [ ] Run `python -m tests.test_prompts` locally.
