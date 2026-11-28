@@ -512,3 +512,21 @@ one). The tests pin down three things:
 
 ### Manual to-do for you
 - [ ] Run `python -m tests.test_prompts` locally.
+
+## Maintenance — split tests (`tests/test_split.py`)
+
+**What landed:** `tests/test_split.py`, checks for `src/etl/split.py`, the step that carves the final dataset into
+train and dev sets and writes parquet files plus the dataset card. Run it with `python -m tests.test_split`
+(needs `pandas` and `pyarrow`).
+
+### The idea: a split must be clean and repeatable
+If a row appears in both train and dev, the dev score is inflated because the model has already seen the answer.
+If the split changes between runs, your ablations are not comparable. The tests lock in:
+- **No overlap:** train and dev share no ids, and the sizes add up.
+- **Deterministic:** the same seed gives the same dev set; a different seed gives a different one.
+- **Edge case:** asking for more dev rows than exist leaves train empty instead of crashing.
+- **Round trip:** the parquet files come back with exactly the expected columns.
+- **Card:** the dataset card shows the funnel and source-mix numbers with thousands separators.
+
+### Manual to-do for you
+- [ ] Run `python -m tests.test_split` locally.
